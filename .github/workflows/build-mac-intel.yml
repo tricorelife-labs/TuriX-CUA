@@ -1,0 +1,139 @@
+name: build-mac-intel-bundle
+
+# Builds a relocatable Mac Intel (x86_64) bundle:
+#   conda env (packed) + source + OmniParser v2 weights + setup-mac.sh
+# The artifact is a single tar.gz that the target user extracts and runs
+# `bash setup-mac.sh`. No pip install required on the target.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build (branch / tag / sha)"
+        default: main
+        type: string
+  push:
+    tags:
+      - "bundle-mac-intel-*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # macos-13 is GitHub's Intel x86_64 runner. Apple Silicon runners
+    # (macos-14, macos-15) would build the wrong arch for this target.
+    runs-on: macos-13
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Verify Intel x86_64 runner
+        run: |
+          uname -a
+          arch=$(uname -m)
+          if [ "$arch" != "x86_64" ]; then
+            echo "::error::Expected x86_64, got $arch — wrong runner."
+            exit 1
+          fi
+
+      - name: Setup miniconda (3.12)
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          python-version: "3.12"
+          activate-environment: turix_env
+          auto-activate-base: false
+          channels: conda-forge,defaults
+
+      - name: Verify env arch
+        shell: bash -el {0}
+        run: |
+          python -c "import platform, sys; print(platform.machine(), sys.version)"
+          python -c "import platform; assert platform.machine()=='x86_64', 'env arch != x86_64'"
+
+      - name: Pip install (TuriX + OmniParser deps)
+        shell: bash -el {0}
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ultralytics conda-pack huggingface_hub
+
+      - name: Download OmniParser v2 detection weights (~38 MB)
+        shell: bash -el {0}
+        run: |
+          mkdir -p weights
+          python - <<'PY'
+          from huggingface_hub import snapshot_download
+          path = snapshot_download(
+              repo_id="microsoft/OmniParser-v2.0",
+              local_dir="weights",
+              allow_patterns=["icon_detect/*"],
+          )
+          print("downloaded to:", path)
+          PY
+          ls -la weights/icon_detect
+
+      - name: conda-pack env
+        shell: bash -el {0}
+        run: |
+          conda pack -n turix_env \
+            -o turix_env-mac-intel.tar.gz \
+            --compress-level 6 \
+            --ignore-missing-files \
+            --n-threads 4
+          du -sh turix_env-mac-intel.tar.gz
+
+      - name: Assemble bundle
+        run: |
+          BUNDLE=TuriX-CUA-mac-intel
+          mkdir -p "$BUNDLE"
+          # source code (skip caches and tmp)
+          rsync -a --exclude '__pycache__' --exclude '.turix_tmp' \
+            src examples skills "$BUNDLE/"
+          cp requirements.txt "$BUNDLE/"
+          cp -r weights "$BUNDLE/"
+          mv turix_env-mac-intel.tar.gz "$BUNDLE/"
+          cp scripts/setup-mac.sh "$BUNDLE/"
+          chmod +x "$BUNDLE/setup-mac.sh"
+
+          # README inside the bundle
+          cat > "$BUNDLE/README.txt" <<'TXT'
+          TuriX-CUA Mac Intel Bundle
+          ===========================
+
+          1. Extract this archive anywhere (e.g. ~/Applications).
+          2. Run:    bash setup-mac.sh
+          3. On first run the script will:
+               - unpack the conda env (one-time, ~600 MB)
+               - copy examples/config.example.json -> examples/config.json
+               - prompt you to fill in your DashScope API key
+               - open System Settings for Accessibility + Screen Recording
+               - launch the agent
+          4. Force-stop hotkey at runtime:  Cmd+Shift+2
+
+          No pip install, no internet required after extraction (except for
+          the LLM API itself).
+          TXT
+
+          tar czf "${BUNDLE}-bundle.tar.gz" "$BUNDLE/"
+          du -sh "${BUNDLE}-bundle.tar.gz"
+          ls -la "${BUNDLE}-bundle.tar.gz"
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TuriX-CUA-mac-intel-bundle
+          path: TuriX-CUA-mac-intel-bundle.tar.gz
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Attach to release (only on tag push)
+        if: startsWith(github.ref, 'refs/tags/bundle-mac-intel-')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: TuriX-CUA-mac-intel-bundle.tar.gz
+          generate_release_notes: true
