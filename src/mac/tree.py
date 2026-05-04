@@ -70,6 +70,12 @@ class MacUITreeBuilder:
         self.app_window = None
         self.window_count = 0
 
+        # OmniParser v2 hook (optional). When set, build_tree merges
+        # vision-detected interactive elements into the AX tree to cover
+        # custom-drawn UIs (e.g. WeChat) that AX doesn't expose.
+        self.omni = None
+        self.omni_iou_threshold = 0.5
+
         # Define interactive actions we care about
         self.INTERACTIVE_ACTIONS = {
             'AXPress',            # Most buttons and clickable elements
@@ -491,6 +497,76 @@ class MacUITreeBuilder:
             # 'ui_tree': self._element_cache
         }
 
+    @staticmethod
+    def _iou_norm(a, b) -> float:
+        ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+        ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+        if ix2 <= ix1 or iy2 <= iy1:
+            return 0.0
+        inter = (ix2 - ix1) * (iy2 - iy1)
+        ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+        return inter / ua if ua > 0 else 0.0
+
+    def _merge_omni_elements(self, root: MacElementNode) -> None:
+        """Run OmniParser on the current screenshot and append vision-only
+        elements (those not already covered by an AX node) to the tree as
+        synthetic interactive nodes."""
+        if self.omni is None or self._screenshot is None or root is None:
+            return
+
+        boxes = self.omni.parse(self._screenshot)
+        if not boxes:
+            return
+
+        existing = []
+
+        def collect(n: MacElementNode):
+            pos = n.attributes.get('position')
+            size = n.attributes.get('size')
+            if pos and size and n.highlight_index is not None:
+                x0, y0 = pos
+                w, h = size
+                existing.append((x0, y0, x0 + w, y0 + h))
+            for c in n.children:
+                collect(c)
+
+        collect(root)
+
+        added = 0
+        for box in boxes:
+            bx = box.get('bbox')
+            if not bx:
+                continue
+            x1, y1, x2, y2 = bx
+            if any(self._iou_norm((x1, y1, x2, y2), e) > self.omni_iou_threshold for e in existing):
+                continue
+            label = box.get('label') or 'icon'
+            node = MacElementNode(
+                role='AXVisionElement',
+                identifier=f'omni_{self.highlight_index}',
+                attributes={
+                    'title': label,
+                    'position': (round(x1, 3), round(y1, 3)),
+                    'size': (round(x2 - x1, 3), round(y2 - y1, 3)),
+                    'source': 'omniparser',
+                    'confidence': box.get('confidence'),
+                },
+                is_visible=True,
+                on_screen=True,
+                parent=root,
+                app_pid=self._current_app_pid,
+            )
+            node.is_interactive = True
+            node.highlight_index = self.highlight_index
+            self._element_cache[self.highlight_index] = node
+            self.highlight_index += 1
+            root.children.append(node)
+            existing.append((x1, y1, x2, y2))
+            added += 1
+
+        if added:
+            logger.info('OmniParser added %d vision-only interactive elements', added)
+
     async def build_tree(self, pid: Optional[int] = None) -> Optional[MacElementNode]:
         """Build UI tree for a specific application"""
         try:
@@ -588,6 +664,12 @@ class MacUITreeBuilder:
                     self.window_count = 1
             else:
                 logger.error('Could not determine a main window for the application.')
+
+            if self.omni is not None and self._screenshot is not None:
+                try:
+                    self._merge_omni_elements(root)
+                except Exception:
+                    logger.exception('Failed to merge OmniParser elements')
 
             return root
 

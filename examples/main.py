@@ -246,6 +246,19 @@ def build_llm(cfg: dict, *, enable_thinking: bool | None = None):
             timeout=timeout,
         )
 
+    if provider == "qwen":
+        return build_openai_compatible_llm(
+            model_name=model_name,
+            api_key=api_key,
+            base_url=base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            temperature=cfg.get("temperature", 0.1),
+            supports_tool_calling=bool(cfg.get("supports_tool_calling", True)),
+            supports_response_format=bool(cfg.get("supports_response_format", False)),
+            model_kwargs=model_kwargs,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
+
     if provider == "ollama":
         if not model_name:
             raise ValueError("Ollama provider requires 'model_name'.")
@@ -368,6 +381,40 @@ def main(config_path: str = "config.json"):
                 skills_dir_path = project_relative
         skills_dir = skills_dir_path
     controller = Controller()
+
+    if agent_cfg.get("use_omniparser"):
+        try:
+            from src.mac.omni_parser import OmniParser
+
+            yolo_path = agent_cfg.get("omniparser_yolo_path")
+            if not yolo_path:
+                raise ValueError("use_omniparser=true but omniparser_yolo_path is empty")
+            yolo_path_resolved = Path(yolo_path).expanduser()
+            if not yolo_path_resolved.is_absolute():
+                yolo_path_resolved = (project_root / yolo_path_resolved).resolve()
+            caption_path = agent_cfg.get("omniparser_caption_path")
+            caption_path_resolved = None
+            if caption_path:
+                caption_path_resolved = Path(caption_path).expanduser()
+                if not caption_path_resolved.is_absolute():
+                    caption_path_resolved = (project_root / caption_path_resolved).resolve()
+                caption_path_resolved = str(caption_path_resolved)
+            controller.mac_tree_builder.omni = OmniParser(
+                yolo_path=str(yolo_path_resolved),
+                caption_model_path=caption_path_resolved,
+                conf=float(agent_cfg.get("omniparser_conf", 0.25)),
+            )
+            controller.mac_tree_builder.omni_iou_threshold = float(
+                agent_cfg.get("omniparser_iou_threshold", 0.5)
+            )
+            log.info(
+                "OmniParser enabled (yolo=%s, caption=%s)",
+                yolo_path_resolved,
+                caption_path_resolved,
+            )
+        except Exception:
+            log.exception("Failed to initialize OmniParser; continuing without it")
+
     raw_hotkey = agent_cfg.get("force_stop_hotkey")
     force_stop_hotkey = normalize_hotkey(raw_hotkey) if raw_hotkey else ""
     save_brain_conversation_path = resolve_artifact_path(
