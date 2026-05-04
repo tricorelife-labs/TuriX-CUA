@@ -21,9 +21,10 @@ permissions:
 
 jobs:
   build:
-    # macos-13 is GitHub's Intel x86_64 runner. Apple Silicon runners
-    # (macos-14, macos-15) would build the wrong arch for this target.
-    runs-on: macos-13
+    # macos-15-intel is GitHub's named Intel x86_64 runner.
+    # `macos-15` (no suffix) and `macos-latest` are now Apple Silicon —
+    # they would silently build the wrong arch.
+    runs-on: macos-15-intel
     timeout-minutes: 60
 
     steps:
