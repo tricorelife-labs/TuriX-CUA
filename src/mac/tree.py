@@ -512,9 +512,12 @@ class MacUITreeBuilder:
         elements (those not already covered by an AX node) to the tree as
         synthetic interactive nodes."""
         if self.omni is None or self._screenshot is None or root is None:
+            logger.info('OmniParser merge skipped (omni=%s screenshot=%s root=%s)',
+                        bool(self.omni), bool(self._screenshot), bool(root))
             return
 
         boxes = self.omni.parse(self._screenshot)
+        logger.info('OmniParser detected %d boxes', len(boxes))
         if not boxes:
             return
 
@@ -564,8 +567,35 @@ class MacUITreeBuilder:
             existing.append((x1, y1, x2, y2))
             added += 1
 
-        if added:
-            logger.info('OmniParser added %d vision-only interactive elements', added)
+        logger.info('OmniParser merge: %d AX nodes, %d boxes, added %d (deduped %d)',
+                    len(existing), len(boxes), added, len(boxes) - added)
+
+    def _build_vision_only_root(self) -> Optional[MacElementNode]:
+        """Build a root that contains only OmniParser-detected elements.
+
+        Used as a fallback when no PID is available (e.g. WeChat's AX tree
+        is so sparse the agent never resolved a PID) but a screenshot +
+        OmniParser are available. Returning a non-empty tree here lets the
+        brain still see clickable controls instead of getting "No UI tree
+        found." every step."""
+        if self.omni is None or self._screenshot is None:
+            return None
+        root = MacElementNode(
+            role='application',
+            identifier='vision-only-root',
+            attributes={'source': 'omniparser'},
+            is_visible=True,
+            on_screen=True,
+            app_pid=self._current_app_pid or 0,
+        )
+        try:
+            self._merge_omni_elements(root)
+        except Exception:
+            logger.exception('vision-only OmniParser merge failed')
+            return None
+        if not root.children:
+            return None
+        return root
 
     async def build_tree(self, pid: Optional[int] = None) -> Optional[MacElementNode]:
         """Build UI tree for a specific application"""
@@ -577,6 +607,13 @@ class MacUITreeBuilder:
 
             if pid is None and self._current_app_pid is None:
                 logger.debug('No app is currently open - waiting for app to be launched')
+                # If OmniParser is wired up and we have a screenshot, fall
+                # back to a vision-only root so downstream actor still has
+                # clickable boxes to choose from.
+                vision_root = self._build_vision_only_root()
+                if vision_root is not None:
+                    logger.info('Using vision-only root (no PID available)')
+                    return vision_root
                 raise ValueError('No app is currently open')
 
             if pid is not None:

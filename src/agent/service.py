@@ -399,6 +399,17 @@ class Agent:
             for r in self._last_result:
                 if r.current_app_pid:
                     latest_pid = r.current_app_pid
+        if latest_pid is None:
+            # Fallback: ask NSWorkspace for the frontmost app's PID. Useful
+            # when the agent skipped open_app (e.g. user already had the
+            # target app focused) so no action ever set current_app_pid.
+            try:
+                import Cocoa
+                front = Cocoa.NSWorkspace.sharedWorkspace().frontmostApplication()
+                if front is not None:
+                    latest_pid = int(front.processIdentifier())
+            except Exception:
+                pass
         return latest_pid
 
     def _refresh_brain_memory(self) -> None:
@@ -953,7 +964,14 @@ class Agent:
             #---------------------------
             logger.debug(f'Last PID: {self.last_pid}')
             if self.use_ui:
-                self.last_pid = self.get_last_pid()
+                # Monotonic update: only overwrite last_pid when we actually
+                # have a non-None PID. Failed steps (whose ActionResult only
+                # carries an error, not current_app_pid) used to silently
+                # reset last_pid to None and break build_tree on every
+                # subsequent step.
+                resolved_pid = self.get_last_pid()
+                if resolved_pid is not None:
+                    self.last_pid = resolved_pid
                 root = await self.mac_tree_builder.build_tree(self.last_pid)
                 state = root._get_visible_clickable_elements_string() if root else "No UI tree found."
             else:

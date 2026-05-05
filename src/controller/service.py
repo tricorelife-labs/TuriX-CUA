@@ -161,11 +161,11 @@ class Controller:
 		async def done():
 			return ActionResult(extracted_content='done', is_done=True)
 		@self.registry.action(
-				'Type', 
+				'Type',
 				param_model=InputTextAction,
 				requires_mac_builder=False)
 		async def input_text(text: str):
-			try:			
+			try:
 				input_successful = await type_into(text)
 				if input_successful:
 					return ActionResult(extracted_content=f'Successfully input text')
@@ -177,28 +177,51 @@ class Controller:
 				logging.error(msg)
 				return ActionResult(extracted_content=msg, error=msg)
 
+		# Aliases: Qwen3-VL (and other VLMs) frequently emit `type` or
+		# `type_text` instead of the registered `input_text`. Register the
+		# same handler under both common names so we don't lose those calls.
+		for _alias in ("type", "type_text"):
+			self.registry.action(
+				'Type',
+				param_model=InputTextAction,
+				requires_mac_builder=False,
+				action_name=_alias,
+			)(input_text)
 
 		@self.registry.action("Open a mac app", param_model=OpenAppAction)
 		async def open_app(app_name: str):
 			"""
-			Attempt to open a macOS app by name. Then:
-			1) Try pgrep-based PID lookup first.
-			2) If that fails or the process has no visible window, fallback to fuzzy matching
-			against NSWorkspace.sharedWorkspace().runningApplications().
+			Attempt to open a macOS app by name, then resolve its PID via
+			fuzzy match against NSWorkspace.runningApplications() so the
+			downstream AX tree builder can attach to the right process.
 			"""
 
 			user_input = app_name
 			workspace = Cocoa.NSWorkspace.sharedWorkspace()
 			logger.info(f"\nLaunching app: {user_input}...")
 
-			# Attempt launching via NSWorkspace
 			success = workspace.launchApplication_(user_input)
 			if not success:
 				msg = f"❌ Failed to launch '{user_input}'"
 				logger.error(msg)
 				return ActionResult(extracted_content=msg, error=msg)
 
+			# Give the app a beat to register and create its main window,
+			# then resolve PID via fuzzy match. Retry a few times because
+			# launchApplication_ returns immediately while the app is still
+			# starting up.
+			user_norm = normalize_for_matching(user_input)
 			pid = None
+			for _ in range(8):
+				await asyncio.sleep(0.4)
+				pid = fuzzy_find_pid(user_norm, workspace)
+				if pid is not None:
+					break
+
+			if pid is None:
+				msg = f"⚠ Launched '{user_input}' but couldn't resolve PID (app may still be starting)"
+				logger.warning(msg)
+				return ActionResult(extracted_content=msg)
 
 			success_msg = f"✅ Launched {user_input}, PID={pid}"
 			logger.info(success_msg)

@@ -458,6 +458,16 @@ def main(config_path: str = "config.json"):
         artifacts_dir           = str(output_dir),
     )
 
+    # The Agent constructs its OWN MacUITreeBuilder (separate from the one
+    # on the Controller), and the runtime call chain
+    # `agent.mac_tree_builder.build_tree(...)` uses the agent's instance.
+    # Mirror the OmniParser hook onto agent's instance so the merge actually
+    # fires. (The same handle is shared with the controller for clarity.)
+    if agent_cfg.get("use_omniparser") and getattr(controller.mac_tree_builder, "omni", None) is not None:
+        agent.mac_tree_builder.omni = controller.mac_tree_builder.omni
+        agent.mac_tree_builder.omni_iou_threshold = controller.mac_tree_builder.omni_iou_threshold
+        log.info("OmniParser handle propagated to agent.mac_tree_builder")
+
     async def runner():
         loop = asyncio.get_running_loop()
         agent_task = asyncio.create_task(agent.run(max_steps=agent_cfg.get("max_steps", 100)))
