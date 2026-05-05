@@ -974,6 +974,18 @@ class Agent:
                     self.last_pid = resolved_pid
                 root = await self.mac_tree_builder.build_tree(self.last_pid)
                 state = root._get_visible_clickable_elements_string() if root else "No UI tree found."
+                # Overwrite the brain's raw screenshot with one that has
+                # numbered colored boxes drawn for AX + OmniParser merged
+                # elements. Without this, the actor LLM sees the raw image
+                # and cannot visually correlate `state` element indices with
+                # screen positions.
+                if root is not None:
+                    try:
+                        annotated = self.mac_tree_builder.annotate_screenshot(root)
+                        if annotated is not None:
+                            self.screenshot_annotated = annotated
+                    except Exception:
+                        logger.exception('annotate_screenshot failed; falling back to raw')
             else:
                 state = ''
             self.save_memory()
