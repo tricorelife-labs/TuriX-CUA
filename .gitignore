@@ -1,1 +1,13 @@
 .turix_tmp/
+
+# Local config — contains real API keys, never commit.
+# Use examples/config.example.json as a template.
+examples/config.json
+
+# OmniParser v2 weights (HuggingFace, ~40 MB detection / ~1 GB caption)
+weights/
+
+# Python build / cache
+__pycache__/
+*.pyc
+.pytest_cache/

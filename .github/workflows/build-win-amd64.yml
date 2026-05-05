@@ -1,0 +1,138 @@
+name: build-win-amd64-bundle
+
+# Builds a relocatable Windows x64 bundle:
+#   conda env (packed) + source + OmniParser v2 weights + setup-win.ps1
+# Single tar.gz; target user extracts and runs `.\setup-win.ps1`. No
+# pip install required on the target.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build (branch / tag / sha)"
+        default: multi-agent-windows
+        type: string
+  push:
+    tags:
+      - "bundle-win-amd64-*"
+
+permissions:
+  contents: write   # needed for softprops/action-gh-release on tag push
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 75
+
+    defaults:
+      run:
+        shell: bash -el {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Verify Windows runner
+        run: |
+          uname -a || true
+          python --version || true
+          echo "RUNNER_OS=$RUNNER_OS"
+          [ "$RUNNER_OS" = "Windows" ] || { echo "::error::not windows"; exit 1; }
+
+      - name: Setup miniconda (3.12)
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          python-version: "3.12"
+          activate-environment: turix_env
+          auto-activate: false
+          channels: conda-forge,defaults
+
+      - name: Verify env arch
+        run: |
+          python -c "import platform, sys; print(platform.machine(), sys.version)"
+          python -c "import platform; assert platform.machine() in ('AMD64','x86_64'), 'env arch not amd64'"
+
+      - name: Pip install (TuriX + OmniParser deps)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # OmniParser stack — ultralytics pulls torch/torchvision; transformers
+          # is only used if caption model is enabled (we don't bundle caption).
+          pip install ultralytics conda-pack huggingface_hub
+
+      - name: Download OmniParser v2 detection weights (~38 MB)
+        run: |
+          mkdir -p weights
+          python - <<'PY'
+          from huggingface_hub import snapshot_download
+          path = snapshot_download(
+              repo_id="microsoft/OmniParser-v2.0",
+              local_dir="weights",
+              allow_patterns=["icon_detect/*"],
+          )
+          print("downloaded to:", path)
+          PY
+          ls -la weights/icon_detect
+
+      - name: conda-pack env
+        run: |
+          conda pack -n turix_env \
+            -o turix_env-win-amd64.tar.gz \
+            --compress-level 6 \
+            --ignore-missing-files \
+            --n-threads 4
+          du -sh turix_env-win-amd64.tar.gz
+
+      - name: Assemble bundle
+        run: |
+          BUNDLE=TuriX-CUA-win-amd64
+          mkdir -p "$BUNDLE"
+          # source code (skip caches and tmp). Use cp -r since rsync may
+          # not be on every windows-latest image.
+          cp -r src examples skills "$BUNDLE/" 2>/dev/null || true
+          # remove any __pycache__ that snuck in
+          find "$BUNDLE" -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+          cp requirements.txt "$BUNDLE/"
+          cp -r weights "$BUNDLE/"
+          mv turix_env-win-amd64.tar.gz "$BUNDLE/"
+          cp scripts/setup-win.ps1 "$BUNDLE/"
+
+          cat > "$BUNDLE/README.txt" <<'TXT'
+          TuriX-CUA Windows x64 Bundle
+          =============================
+
+          1. Extract this archive (e.g. with 7-Zip or `tar xzf`).
+          2. Open PowerShell in the extracted folder and run:
+                .\setup-win.ps1
+             (If PowerShell blocks the script, run once:
+                Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass)
+          3. On first run the script will:
+               - unpack the conda env (one-time, ~600 MB)
+               - copy examples/config.example.json -> examples/config.json
+               - prompt you to fill in your DashScope API key
+               - launch the agent
+          4. Force-stop hotkey at runtime:  Ctrl+Shift+2
+
+          No pip install, no conda required on the target machine.
+          TXT
+
+          tar czf "${BUNDLE}-bundle.tar.gz" "$BUNDLE/"
+          du -sh "${BUNDLE}-bundle.tar.gz"
+          ls -la "${BUNDLE}-bundle.tar.gz"
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TuriX-CUA-win-amd64-bundle
+          path: TuriX-CUA-win-amd64-bundle.tar.gz
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Attach to release (only on tag push)
+        if: startsWith(github.ref, 'refs/tags/bundle-win-amd64-')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: TuriX-CUA-win-amd64-bundle.tar.gz
+          generate_release_notes: true

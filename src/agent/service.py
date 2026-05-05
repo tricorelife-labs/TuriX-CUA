@@ -276,6 +276,12 @@ class Agent:
         self.include_attributes = include_attributes
         self.max_error_length = max_error_length
         self.screenshot_annotated = None
+        # OmniParser hook (optional). Wired by main.py when use_omniparser
+        # is true. When set, brain_step replaces the raw screenshot with
+        # an OmniParser-annotated copy so the brain VLM sees numbered
+        # interactive boxes overlaid on the UI.
+        self.omni = None
+        self.omni_index_to_center = {}
         self.max_input_tokens = max_input_tokens
         self.use_search = use_search
         self.use_skills = use_skills
@@ -791,6 +797,28 @@ class Agent:
             self.previous_screenshot = self.screenshot_annotated
             screenshot = pyautogui.screenshot()
             screenshot = downscale_screenshot_by_tier(screenshot)
+
+            # OmniParser annotation: detect interactive icons, draw numbered
+            # red boxes, expose index→pixel-center map for downstream click.
+            if self.omni is not None:
+                try:
+                    from src.windows.omni_parser import annotate_with_boxes
+
+                    boxes = self.omni.parse(screenshot)
+                    if boxes:
+                        screenshot, self.omni_index_to_center = annotate_with_boxes(
+                            screenshot, boxes
+                        )
+                        logger.info(
+                            "OmniParser drew %d numbered boxes on screenshot",
+                            len(boxes),
+                        )
+                    else:
+                        self.omni_index_to_center = {}
+                except Exception:
+                    logger.exception("OmniParser annotation failed; using raw screenshot")
+                    self.omni_index_to_center = {}
+
             self.screenshot_annotated = screenshot
             os.makedirs(self.images_dir, exist_ok=True)
             current_screenshot_path = os.path.join(self.images_dir, f"screenshot_{self.n_steps}.png")

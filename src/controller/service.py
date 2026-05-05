@@ -42,10 +42,10 @@ class Controller:
 		async def done():
 			return ActionResult(extracted_content='done', is_done=True)
 		@self.registry.action(
-				'Type', 
+				'Type',
 				param_model=InputTextAction,)
 		async def input_text(text: str):
-			try:			
+			try:
 				input_successful = await self.win.type_text(text)
 				if input_successful:
 					return ActionResult(extracted_content=f'Successfully input text')
@@ -57,6 +57,15 @@ class Controller:
 				logging.error(msg)
 				return ActionResult(extracted_content=msg, error=msg)
 
+		# Aliases: Qwen3-VL (and other VLMs) commonly emit `type` or
+		# `type_text` as the action name. Register the same handler under
+		# both so we don't lose those calls.
+		for _alias in ("type", "type_text"):
+			self.registry.action(
+				'Type',
+				param_model=InputTextAction,
+				action_name=_alias,
+			)(input_text)
 
 		@self.registry.action("Open a Windows app", param_model=OpenAppAction)
 		async def open_app(app_name: str):

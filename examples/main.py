@@ -300,6 +300,19 @@ def build_llm(cfg: dict, *, enable_thinking: bool | None = None):
             timeout=timeout,
         )
 
+    if provider == "qwen":
+        return build_openai_compatible_llm(
+            model_name=model,
+            api_key=api_key,
+            base_url=base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            temperature=temperature,
+            supports_tool_calling=bool(cfg.get("supports_tool_calling", True)),
+            supports_response_format=bool(cfg.get("supports_response_format", False)),
+            model_kwargs=model_kwargs,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
+
     if provider == "google_pro_stable":
         return ChatGoogleGenerativeAI(
             model="gemini-2.5-pro-preview-05-06",
@@ -484,6 +497,39 @@ def main(config_path: str = "config.json"):
         ),
         artifacts_dir=str(output_dir),
     )
+
+    # OmniParser hookup: detect interactive icons on each screenshot and
+    # draw numbered red boxes so the brain VLM sees clickable targets
+    # explicitly. Cross-platform (CUDA on Windows when available).
+    if agent_cfg.get("use_omniparser"):
+        try:
+            from src.windows.omni_parser import OmniParser
+
+            yolo_path = agent_cfg.get("omniparser_yolo_path")
+            if not yolo_path:
+                raise ValueError("use_omniparser=true but omniparser_yolo_path is empty")
+            yolo_path_resolved = Path(yolo_path).expanduser()
+            if not yolo_path_resolved.is_absolute():
+                yolo_path_resolved = (project_root / yolo_path_resolved).resolve()
+            caption_path = agent_cfg.get("omniparser_caption_path")
+            caption_path_resolved = None
+            if caption_path:
+                caption_path_resolved = Path(caption_path).expanduser()
+                if not caption_path_resolved.is_absolute():
+                    caption_path_resolved = (project_root / caption_path_resolved).resolve()
+                caption_path_resolved = str(caption_path_resolved)
+            agent.omni = OmniParser(
+                yolo_path=str(yolo_path_resolved),
+                caption_model_path=caption_path_resolved,
+                conf=float(agent_cfg.get("omniparser_conf", 0.25)),
+            )
+            log.info(
+                "OmniParser enabled (yolo=%s, caption=%s)",
+                yolo_path_resolved,
+                caption_path_resolved,
+            )
+        except Exception:
+            log.exception("Failed to initialize OmniParser; continuing without it")
 
     async def runner():
         loop = asyncio.get_running_loop()
