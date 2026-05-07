@@ -688,17 +688,26 @@ class MacUITreeBuilder:
             if main_window_ref:
                 logger.debug(f'Found main window: {main_window_ref}')
                 window_node = await self._process_element(main_window_ref, self._current_app_pid, root)
+                # _process_element returns None when AX element processing
+                # fails (e.g. WeChat's heavily custom-drawn UI). Guard the
+                # whole post-processing block so build_tree still returns a
+                # tree (just without window-bounded clipping) and the
+                # OmniParser merge below still fires.
                 if window_node:
                     root.children.append(window_node)
-                # Now that we have the main window node, store its position and size in self.app_window
-                main_pos = window_node.attributes.get('position')
-                main_size = window_node.attributes.get('size')
-                if main_pos and main_size:
-                    self.app_window = {
-                        'position': main_pos,
-                        'size': main_size
-                    }
-                    self.window_count = 1
+                    main_pos = window_node.attributes.get('position')
+                    main_size = window_node.attributes.get('size')
+                    if main_pos and main_size:
+                        self.app_window = {
+                            'position': main_pos,
+                            'size': main_size
+                        }
+                        self.window_count = 1
+                else:
+                    logger.warning(
+                        'Main window AX processing returned None — keeping AX root empty, '
+                        'OmniParser will still annotate via screenshot.'
+                    )
             else:
                 logger.error('Could not determine a main window for the application.')
 
