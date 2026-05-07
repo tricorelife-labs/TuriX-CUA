@@ -163,26 +163,35 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     controller = Controller()
 
-    # OmniParser hookup (mirrors main.py)
+    # --- OmniParser instance (cross-branch). The wrapper lives in
+    # src.mac.omni_parser on the macOS branch and src.windows.omni_parser
+    # on the multi-agent-windows branch.
+    omni_instance = None
     if agent_cfg.get("use_omniparser"):
         try:
-            from src.mac.omni_parser import OmniParser
+            try:
+                from src.mac.omni_parser import OmniParser
+            except ImportError:
+                from src.windows.omni_parser import OmniParser
             yolo_path = Path(agent_cfg.get("omniparser_yolo_path", "weights/icon_detect/model.pt"))
             if not yolo_path.is_absolute():
                 yolo_path = (_ROOT / yolo_path).resolve()
             caption_path = agent_cfg.get("omniparser_caption_path") or None
             if caption_path:
                 caption_path = str(_ROOT / caption_path) if not Path(caption_path).is_absolute() else caption_path
-            controller.mac_tree_builder.omni = OmniParser(
+            omni_instance = OmniParser(
                 yolo_path=str(yolo_path),
                 caption_model_path=caption_path,
                 conf=float(agent_cfg.get("omniparser_conf", 0.25)),
             )
-            controller.mac_tree_builder.omni_iou_threshold = float(
-                agent_cfg.get("omniparser_iou_threshold", 0.5)
-            )
+            iou = float(agent_cfg.get("omniparser_iou_threshold", 0.5))
+            # Mac path: Controller has mac_tree_builder
+            if hasattr(controller, "mac_tree_builder"):
+                controller.mac_tree_builder.omni = omni_instance
+                controller.mac_tree_builder.omni_iou_threshold = iou
         except Exception as e:
             print(f"[cli] OmniParser init failed: {e}", file=sys.stderr)
+            omni_instance = None
 
     agent = Agent(
         task=agent_cfg["task"],
@@ -202,10 +211,17 @@ def _cmd_run(args: argparse.Namespace) -> int:
         artifacts_dir=str(output_dir),
     )
 
-    # Mirror OmniParser handle to agent.mac_tree_builder (the runtime instance)
-    if controller.mac_tree_builder.omni is not None:
-        agent.mac_tree_builder.omni = controller.mac_tree_builder.omni
-        agent.mac_tree_builder.omni_iou_threshold = controller.mac_tree_builder.omni_iou_threshold
+    # Wire OmniParser onto the runtime instance:
+    # - Mac branch: agent.mac_tree_builder is the one used by build_tree
+    # - Win branch: agent.omni is read directly inside brain_step
+    if omni_instance is not None:
+        if hasattr(agent, "mac_tree_builder"):
+            agent.mac_tree_builder.omni = omni_instance
+            agent.mac_tree_builder.omni_iou_threshold = float(
+                agent_cfg.get("omniparser_iou_threshold", 0.5)
+            )
+        elif hasattr(agent, "omni"):
+            agent.omni = omni_instance
 
     # --- run ---
     t0 = time.time()
