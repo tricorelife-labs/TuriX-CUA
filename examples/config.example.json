@@ -4,7 +4,7 @@
   "brain_enable_thinking": false,
   "brain_llm": {
     "provider": "qwen",
-    "model_name": "qwen3-vl-plus",
+    "model_name": "qwen3.6-plus",
     "api_key": "YOUR_DASHSCOPE_API_KEY",
     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "supports_tool_calling": true,
@@ -13,7 +13,7 @@
 
   "actor_llm": {
     "provider": "qwen",
-    "model_name": "qwen3-vl-plus",
+    "model_name": "qwen3.6-plus",
     "api_key": "YOUR_DASHSCOPE_API_KEY",
     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "supports_tool_calling": true,
@@ -22,7 +22,7 @@
 
   "planner_llm": {
     "provider": "qwen",
-    "model_name": "qwen3-vl-plus",
+    "model_name": "qwen3.6-plus",
     "api_key": "YOUR_DASHSCOPE_API_KEY",
     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "supports_tool_calling": true,
@@ -31,7 +31,7 @@
 
   "memory_llm": {
     "provider": "qwen",
-    "model_name": "qwen3-vl-plus",
+    "model_name": "qwen3.6-plus",
     "api_key": "YOUR_DASHSCOPE_API_KEY",
     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "supports_tool_calling": true,
@@ -39,7 +39,7 @@
   },
 
   "agent": {
-    "task": "open Chrome, go to github, and search for turix-cua in the github webpage. Enter the TuriX-CUA repository, and star it.",
+    "task": "REPLACE THIS WITH YOUR ACTUAL TASK in any language.",
     "memory_budget_tokens": 2000,
     "summary_memory_budget_tokens": 8000,
     "use_ui": false,
