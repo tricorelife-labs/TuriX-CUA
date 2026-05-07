@@ -95,9 +95,9 @@ jobs:
             --ignore-missing-files \
             --n-threads 1
           du -sh turix_env-win-amd64.zip
-          # Sanity check: list a few entries to confirm the zip is not truncated.
-          unzip -l turix_env-win-amd64.zip | head -10
-          unzip -l turix_env-win-amd64.zip | tail -3
+          # Sanity check the archive opens — `unzip -l | head` would
+          # SIGPIPE under bash pipefail. Use python's zipfile instead.
+          python -c "import zipfile,sys; z=zipfile.ZipFile('turix_env-win-amd64.zip'); names=z.namelist(); print('entries:', len(names)); print('first:', names[:3]); print('last :', names[-3:])"
 
       - name: Assemble bundle
         run: |
