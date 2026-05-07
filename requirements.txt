@@ -2,7 +2,15 @@
 pyautogui
 pynput
 pypinyin
-numpy>=1.24.0
+# numpy 2.x and opencv-python >=4.11 link against macOS 13.3+ Accelerate
+# ILP64 BLAS symbols (_cblas_*$NEWLAPACK$ILP64) which are absent on
+# macOS 12. Pin to the last LP64 versions so the built bundle works on
+# macOS 12 → 15 alike. ultralytics/torch tolerate both.
+numpy>=1.24,<2
+# Same Accelerate ILP64 issue affects opencv-python 4.11+ on macOS 12.
+# 4.10.x is the last LP64 build. ultralytics will pull this transitively
+# but only if no pin is set; this line forces the safe range.
+opencv-python>=4.8,<4.11
 Pillow>=10.0.0
 rapidfuzz>=3.0.0
 fuzzywuzzy
