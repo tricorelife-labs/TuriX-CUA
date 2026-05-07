@@ -82,13 +82,22 @@ jobs:
           ls -la weights/icon_detect
 
       - name: conda-pack env
+        # Zip format (not tar.gz) on Windows — bsdtar / GNU-tar interaction
+        # with conda-pack's multi-thread gzip on windows-latest produced a
+        # truncated stream in v0.1.x. Zip is single-pass per entry, no
+        # combined gzip stream, so it round-trips cleanly through the
+        # outer bundle archive on both Windows and macOS extractors.
         run: |
           conda pack -n turix_env \
-            -o turix_env-win-amd64.tar.gz \
+            -o turix_env-win-amd64.zip \
+            --format zip \
             --compress-level 6 \
             --ignore-missing-files \
-            --n-threads 4
-          du -sh turix_env-win-amd64.tar.gz
+            --n-threads 1
+          du -sh turix_env-win-amd64.zip
+          # Sanity check: list a few entries to confirm the zip is not truncated.
+          unzip -l turix_env-win-amd64.zip | head -10
+          unzip -l turix_env-win-amd64.zip | tail -3
 
       - name: Assemble bundle
         run: |
@@ -101,7 +110,7 @@ jobs:
           find "$BUNDLE" -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
           cp requirements.txt "$BUNDLE/"
           cp -r weights "$BUNDLE/"
-          mv turix_env-win-amd64.tar.gz "$BUNDLE/"
+          mv turix_env-win-amd64.zip "$BUNDLE/"
           cp scripts/setup-win.ps1 "$BUNDLE/"
 
           cat > "$BUNDLE/README.txt" <<'TXT'

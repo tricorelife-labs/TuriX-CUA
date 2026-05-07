@@ -9,7 +9,8 @@ $ErrorActionPreference = 'Stop'
 
 $Dir          = Split-Path -Parent $MyInvocation.MyCommand.Path
 $EnvDir       = Join-Path $Dir '.turix_env'
-$EnvTarball   = Join-Path $Dir 'turix_env-win-amd64.tar.gz'
+$EnvZip       = Join-Path $Dir 'turix_env-win-amd64.zip'
+$EnvTarball   = Join-Path $Dir 'turix_env-win-amd64.tar.gz'   # legacy v0.1.x
 $Config       = Join-Path $Dir 'examples\config.json'
 $Template     = Join-Path $Dir 'examples\config.example.json'
 
@@ -31,16 +32,23 @@ Write-Host '✓ AMD64 detected'
 # 2. Unpack env (one-time)
 $pythonExe = Join-Path $EnvDir 'python.exe'
 if (-not (Test-Path $pythonExe)) {
-    if (-not (Test-Path $EnvTarball)) {
-        Err "Missing env tarball: $EnvTarball"
+    if (Test-Path $EnvZip) {
+        Bold '==> Unpacking conda env from zip (first run, ~600 MB) ...'
+        if (Test-Path $EnvDir) { Remove-Item -Recurse -Force $EnvDir }
+        New-Item -ItemType Directory -Path $EnvDir | Out-Null
+        # Expand-Archive is built into PowerShell 5+; safer than tar -xzf
+        # for conda-pack output on Windows (no GZip stream issues).
+        Expand-Archive -Path $EnvZip -DestinationPath $EnvDir -Force
+    } elseif (Test-Path $EnvTarball) {
+        Bold '==> Unpacking legacy tar.gz env (first run, ~600 MB) ...'
+        if (Test-Path $EnvDir) { Remove-Item -Recurse -Force $EnvDir }
+        New-Item -ItemType Directory -Path $EnvDir | Out-Null
+        tar -xzf $EnvTarball -C $EnvDir
+        if ($LASTEXITCODE -ne 0) { Err 'tar extract failed'; exit 1 }
+    } else {
+        Err "Missing env archive: $EnvZip (or legacy $EnvTarball)"
         exit 1
     }
-    Bold '==> Unpacking conda env (first run, ~600 MB) ...'
-    if (Test-Path $EnvDir) { Remove-Item -Recurse -Force $EnvDir }
-    New-Item -ItemType Directory -Path $EnvDir | Out-Null
-    # tar is built into Windows 10+; no extra deps needed.
-    tar -xzf $EnvTarball -C $EnvDir
-    if ($LASTEXITCODE -ne 0) { Err 'tar extract failed'; exit 1 }
 
     Bold '==> Fixing env paths (conda-unpack) ...'
     $unpack = Join-Path $EnvDir 'Scripts\conda-unpack.exe'
